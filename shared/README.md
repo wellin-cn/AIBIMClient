@@ -1,2 +1,0 @@
-# AIBaseIMShared
-Shared Knowlage repository
