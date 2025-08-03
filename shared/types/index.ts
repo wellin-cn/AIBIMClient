@@ -9,10 +9,15 @@
  */
 
 // Re-export all types for easy importing
+// 导出所有类型定义
 export * from './user'
 export * from './message'
 export * from './socket'
 export * from './api'
+
+// 重要更新说明
+// v1.1.0: 新增 NewMemberJoinedData 类型和 user:new-member-joined 事件
+// 详细信息请查看: ../API-CHANGES.md
 
 // Common utility types
 export interface BaseEntity {

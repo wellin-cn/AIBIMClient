@@ -4,12 +4,44 @@
 
 这是IM聊天系统的共享代码库，包含前后端通用的类型定义、接口规范、工具函数等。通过软链接的方式同步到server和client项目中。
 
+## 🚨 重要更新通知
+
+### v1.1.0 - 用户信息同步问题修复 (2025-01-XX)
+
+**⚠️ 需要客户端更新**: 为修复多用户登录时的用户信息同步问题，我们对Socket.io事件进行了重要更改。
+
+**关键变更**:
+- 新增 `user:new-member-joined` 事件
+- `user:joined` 事件职责调整（仅用于自身登录确认）
+
+**🔧 快速迁移**:
+```javascript
+// 新增：监听新成员加入
+socket.on('user:new-member-joined', (data) => {
+  console.log(`${data.newMember.username} 加入了聊天室`);
+  updateOnlineUsers(data.onlineUsers);
+});
+```
+
+📖 **详细信息**: 
+- 🚨 [客户端紧急更新通知](./CLIENT-UPDATE-NOTICE.md) ← **立即查看**
+- [完整变更说明](./API-CHANGES.md)
+- [客户端迁移指南](./MIGRATION-GUIDE.md)
+- [详细发布说明](./RELEASE-NOTES.md)
+- [版本变更日志](./CHANGELOG.md)
+- [文档导航索引](./INDEX.md)
+
 ## 📁 目录结构
 
 ```
 shared/
 ├── README.md                    # 本文件
 ├── CHANGELOG.md                 # 变更日志
+├── API-CHANGES.md               # API变更通知
+├── MIGRATION-GUIDE.md           # 客户端迁移指南
+├── CLIENT-UPDATE-NOTICE.md      # 🚨 客户端紧急更新通知
+├── RELEASE-NOTES.md             # 详细发布说明
+├── INDEX.md                     # 文档导航索引
 ├── types/                       # TypeScript类型定义
 │   ├── index.ts                 # 导出所有类型
 │   ├── user.ts                  # 用户相关类型

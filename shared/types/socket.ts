@@ -5,6 +5,7 @@
 import {
   UserJoinData,
   UserJoinedData,
+  NewMemberJoinedData,
   UserJoinErrorData,
   UserLeaveData,
   UserLeftData,
@@ -62,6 +63,7 @@ export interface ServerToClientEvents {
   
   // User events
   'user:joined': (data: UserJoinedData) => void
+  'user:new-member-joined': (data: NewMemberJoinedData) => void
   'user:join:error': (data: UserJoinErrorData) => void
   'user:left': (data: UserLeftData) => void
   'users:update': (data: UsersUpdateData) => void

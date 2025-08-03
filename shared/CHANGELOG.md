@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial project setup and documentation
 
+## [1.1.0] - 2025-01-XX
+
+### Added
+- `NewMemberJoinedData` interface for new member join notifications
+- `user:new-member-joined` Socket.io event type definition
+- Comprehensive API change documentation
+- Client migration guide for Socket.io event updates
+- Release notes with detailed upgrade instructions
+
+### Changed
+- Enhanced user information synchronization in Socket.io events
+- Improved data consistency for multi-user scenarios
+- `user:joined` event now only handles self-login confirmation
+- Separated concerns between self-login and new member notifications
+
+### Fixed
+- **CRITICAL**: User information synchronization issue when multiple users login simultaneously
+- Socket.io event data completeness for user join notifications
+- User identity confusion in multi-user chat scenarios
+
+### Documentation
+- Updated Socket.io event documentation
+- Added migration guide for client developers
+- Enhanced TypeScript type definitions with usage examples
+
 ## [1.0.0] - 2025-01-XX
 
 ### Added
