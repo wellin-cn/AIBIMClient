@@ -65,6 +65,12 @@ export interface UserJoinedData {
   }
 }
 
+// New member joined notification data (broadcast to other users)
+export interface NewMemberJoinedData {
+  newMember: OnlineUser
+  onlineUsers: OnlineUser[]
+}
+
 // User join error data
 export interface UserJoinErrorData {
   code: string

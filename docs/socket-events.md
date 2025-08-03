@@ -116,15 +116,31 @@ socket.emit('user:leave', {
 ### 1. 用户加入成功
 **事件名**: `user:joined`
 
+**说明**: 用户自己加入成功后收到的确认事件
+
 **数据格式**:
 ```typescript
 interface UserJoinedData {
-  user: {
-    id: string
-    username: string
-    joinedAt: number
+  user: OnlineUser        // 当前用户完整信息
+  onlineUsers: OnlineUser[] // 当前在线用户列表
+  serverInfo: {
+    version: string
+    maxUsers: number
+    currentUsers: number
   }
-  onlineUsers: User[]     // 当前在线用户列表
+}
+```
+
+### 1.1. 新成员加入通知
+**事件名**: `user:new-member-joined`
+
+**说明**: 其他用户加入时，现有用户收到的通知事件
+
+**数据格式**:
+```typescript
+interface NewMemberJoinedData {
+  newMember: OnlineUser   // 新加入的用户信息
+  onlineUsers: OnlineUser[] // 更新后的在线用户列表
 }
 ```
 
