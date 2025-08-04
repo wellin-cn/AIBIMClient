@@ -72,12 +72,24 @@ export const useChatStore = create<ChatStore>()(
 
         // 消息操作
         addMessage: (message: Message) => {
+          console.log('📦 [ChatStore] Adding message to store:', {
+            messageId: message.id,
+            content: message.content,
+            senderName: message.sender?.name,
+            type: message.type,
+            status: message.status,
+            timestamp: message.timestamp
+          })
+          
           set((state) => {
             const newMessages = [...state.messages, message]
             // 保持最近1000条消息
             if (newMessages.length > 1000) {
               newMessages.splice(0, newMessages.length - 1000)
             }
+            
+            console.log('📦 [ChatStore] Message added, new count:', newMessages.length)
+            
             return {
               messages: newMessages,
               lastMessageId: message.id,
@@ -95,7 +107,7 @@ export const useChatStore = create<ChatStore>()(
               name: 'System',
               isOnline: true,
             },
-            timestamp: Date.now(),
+            timestamp: new Date(),
             type: MessageType.SYSTEM,
             status: MessageStatus.SENT,
           }
@@ -113,11 +125,30 @@ export const useChatStore = create<ChatStore>()(
         },
 
         updateMessage: (messageId: string, updates: Partial<Message>) => {
-          set((state) => ({
-            messages: state.messages.map(msg =>
+          console.log('🔄 [ChatStore] Updating message:', {
+            messageId,
+            updates,
+            timestamp: new Date().toISOString()
+          })
+          
+          set((state) => {
+            const updatedMessages = state.messages.map(msg =>
               msg.id === messageId ? { ...msg, ...updates } : msg
-            ),
-          }), false, 'updateMessage')
+            )
+            
+            const updatedMessage = updatedMessages.find(msg => msg.id === messageId)
+            if (updatedMessage) {
+              console.log('✅ [ChatStore] Message updated successfully:', {
+                messageId,
+                newStatus: updatedMessage.status,
+                content: updatedMessage.content
+              })
+            } else {
+              console.warn('⚠️ [ChatStore] Message not found for update:', messageId)
+            }
+            
+            return { messages: updatedMessages }
+          }, false, 'updateMessage')
         },
 
         deleteMessage: (messageId: string) => {

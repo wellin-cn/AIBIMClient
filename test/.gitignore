@@ -1,0 +1,21 @@
+# 测试结果和报告
+test-results/
+coverage/
+*.lcov
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Jest
+/coverage/
+.nyc_output
+
+# 临时文件
+*.tmp
+*.temp
+
+# 调试文件
+debug.log

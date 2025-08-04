@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { ChatWindow } from '../components/chat/ChatWindow'
-import { MessageList } from '../components/chat/MessageList'
-import { MessageInput } from '../components/chat/MessageInput'
+import { NotificationManager } from '../components/ui'
 import { useUIStore, useChatStore } from '../store'
 import { useSocket } from '../hooks/useSocket'
 import { ConnectionStatus } from '../types'
@@ -15,7 +14,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onLogout }) => {
   
   const { sidebarVisible, setSidebarVisible } = useUIStore()
   const { connectionStatus } = useChatStore()
-  const { disconnect } = useSocket()
+  const { disconnect, notifications, dismissNotification } = useSocket()
 
   const isConnected = connectionStatus === ConnectionStatus.CONNECTED
 
@@ -44,6 +43,12 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onLogout }) => {
         }
         sidebarVisible={sidebarVisible}
         onToggleSidebar={handleToggleSidebar}
+      />
+
+      {/* 通知系统 */}
+      <NotificationManager
+        notifications={notifications}
+        onDismiss={dismissNotification}
       />
 
       {/* 连接状态遮罩 */}

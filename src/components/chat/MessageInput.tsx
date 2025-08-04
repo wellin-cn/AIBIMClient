@@ -40,11 +40,29 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   }, [sendTypingStatus])
 
   const handleSend = async () => {
-    if (!message.trim() || disabled || !currentUser) return
+    if (!message.trim() || disabled || !currentUser) {
+      console.log('📝 [MessageInput] Send cancelled:', {
+        hasMessage: !!message.trim(),
+        disabled,
+        hasCurrentUser: !!currentUser,
+        messageLength: message.length
+      })
+      return
+    }
+
+    const messageContent = message.trim()
+    console.log('📤 [MessageInput] Starting message send:', {
+      content: messageContent,
+      contentLength: messageContent.length,
+      currentUser: currentUser?.name,
+      timestamp: new Date().toISOString()
+    })
 
     try {
       // 发送消息
-      await sendMessage(message.trim())
+      console.log('📡 [MessageInput] Calling sendMessage...')
+      await sendMessage(messageContent)
+      console.log('✅ [MessageInput] Message sent successfully!')
       
       // 清空输入框
       setMessage('')
@@ -55,7 +73,12 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       // 清除输入状态
       sendTypingStatus(false)
     } catch (error) {
-      console.error('Failed to send message:', error)
+      console.error('❌ [MessageInput] Failed to send message:', {
+        error: error instanceof Error ? error.message : error,
+        errorStack: error instanceof Error ? error.stack : undefined,
+        messageContent,
+        timestamp: new Date().toISOString()
+      })
       // 这里可以显示错误提示
     }
   }

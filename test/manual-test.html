@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多用户聊天测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .user-section {
+            border-left: 4px solid #007bff;
+            padding-left: 15px;
+            margin-bottom: 30px;
+        }
+        .user-section.user2 { border-left-color: #28a745; }
+        .user-section.user3 { border-left-color: #ffc107; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .controls input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-connect { background: #007bff; color: white; }
+        .btn-disconnect { background: #dc3545; color: white; }
+        .btn-send { background: #28a745; color: white; }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .log .timestamp { color: #6c757d; }
+        .log .user1 { color: #007bff; }
+        .log .user2 { color: #28a745; }
+        .log .user3 { color: #ffc107; }
+        .log .error { color: #dc3545; }
+        .log .success { color: #28a745; }
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .quick-actions button {
+            padding: 6px 12px;
+            border: 1px solid #6c757d;
+            background: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .quick-actions button:hover {
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 多用户聊天测试工具</h1>
+        <p>这个工具用于测试多个用户同时连接并互相发送消息的功能。</p>
+        
+        <!-- 全局控制面板 -->
+        <div class="test-panel">
+            <h2>🎛️ 全局控制</h2>
+            <div class="controls">
+                <input type="text" id="serverUrl" value="ws://localhost:3001" placeholder="服务器地址">
+                <button class="btn-connect" onclick="connectAllUsers()">连接所有用户</button>
+                <button class="btn-disconnect" onclick="disconnectAllUsers()">断开所有用户</button>
+                <button onclick="clearLogs()">清空日志</button>
+            </div>
+            <div class="quick-actions">
+                <button onclick="testScenario1()">场景1: 顺序连接</button>
+                <button onclick="testScenario2()">场景2: 消息对话</button>
+                <button onclick="testScenario3()">场景3: 快速消息</button>
+                <button onclick="showConnectionInfo()">显示连接信息</button>
+                <button onclick="testMessageSending()">测试消息发送</button>
+            </div>
+        </div>
+
+        <!-- 用户1 -->
+        <div class="test-panel">
+            <div class="user-section user1">
+                <h3>👤 用户1 (testuser1)</h3>
+                <div class="controls">
+                    <input type="text" id="user1-username" value="testuser1" placeholder="用户名">
+                    <button class="btn-connect" onclick="connectUser(1)">连接</button>
+                    <button class="btn-disconnect" onclick="disconnectUser(1)">断开</button>
+                </div>
+                <div class="controls">
+                    <input type="text" id="user1-message" placeholder="输入消息..." onkeypress="handleEnter(event, 1)">
+                    <button class="btn-send" onclick="sendMessage(1)">发送消息</button>
+                </div>
+                <div id="user1-status" class="status disconnected">未连接</div>
+            </div>
+        </div>
+
+        <!-- 用户2 -->
+        <div class="test-panel">
+            <div class="user-section user2">
+                <h3>👤 用户2 (testuser2)</h3>
+                <div class="controls">
+                    <input type="text" id="user2-username" value="testuser2" placeholder="用户名">
+                    <button class="btn-connect" onclick="connectUser(2)">连接</button>
+                    <button class="btn-disconnect" onclick="disconnectUser(2)">断开</button>
+                </div>
+                <div class="controls">
+                    <input type="text" id="user2-message" placeholder="输入消息..." onkeypress="handleEnter(event, 2)">
+                    <button class="btn-send" onclick="sendMessage(2)">发送消息</button>
+                </div>
+                <div id="user2-status" class="status disconnected">未连接</div>
+            </div>
+        </div>
+
+        <!-- 用户3 -->
+        <div class="test-panel">
+            <div class="user-section user3">
+                <h3>👤 用户3 (testuser3)</h3>
+                <div class="controls">
+                    <input type="text" id="user3-username" value="testuser3" placeholder="用户名">
+                    <button class="btn-connect" onclick="connectUser(3)">连接</button>
+                    <button class="btn-disconnect" onclick="disconnectUser(3)">断开</button>
+                </div>
+                <div class="controls">
+                    <input type="text" id="user3-message" placeholder="输入消息..." onkeypress="handleEnter(event, 3)">
+                    <button class="btn-send" onclick="sendMessage(3)">发送消息</button>
+                </div>
+                <div id="user3-status" class="status disconnected">未连接</div>
+            </div>
+        </div>
+
+        <!-- 日志面板 -->
+        <div class="test-panel">
+            <h2>📋 测试日志</h2>
+            <div id="logs" class="log"></div>
+        </div>
+    </div>
+
+    <script src="http://localhost:3001/socket.io/socket.io.js"></script>
+    <script>
+        // 存储每个用户的Socket连接
+        const users = {
+            1: { socket: null, connected: false },
+            2: { socket: null, connected: false },
+            3: { socket: null, connected: false }
+        };
+
+        // 日志函数
+        function log(message, type = 'info', userId = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            const userClass = userId ? `user${userId}` : type;
+            const logElement = document.getElementById('logs');
+            logElement.innerHTML += `<div><span class="timestamp">[${timestamp}]</span> <span class="${userClass}">${message}</span></div>`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        // 更新用户状态
+        function updateUserStatus(userId, status, message) {
+            const statusElement = document.getElementById(`user${userId}-status`);
+            statusElement.className = `status ${status}`;
+            statusElement.textContent = message;
+        }
+
+        // 连接用户
+        function connectUser(userId) {
+            const username = document.getElementById(`user${userId}-username`).value;
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            if (users[userId].connected) {
+                log(`用户${userId} 已经连接`, 'info', userId);
+                return;
+            }
+
+            log(`用户${userId} 开始连接: ${username} -> ${serverUrl}`, 'info', userId);
+            updateUserStatus(userId, 'connecting', '连接中...');
+
+            try {
+                const socket = io(serverUrl, {
+                    auth: { username },
+                    transports: ['polling', 'websocket'],
+                    timeout: 20000,
+                    forceNew: true
+                });
+
+                users[userId].socket = socket;
+
+                // 连接成功
+                socket.on('connect', () => {
+                    log(`✅ 用户${userId} 连接成功! Socket ID: ${socket.id}`, 'success', userId);
+                    updateUserStatus(userId, 'connected', `已连接 (${socket.id})`);
+                    users[userId].connected = true;
+                    
+                    // 发送用户加入事件
+                    socket.emit('user:join', {
+                        username,
+                        timestamp: new Date().toISOString()
+                    });
+                });
+
+                // 连接失败
+                socket.on('connect_error', (error) => {
+                    log(`❌ 用户${userId} 连接失败: ${error.message}`, 'error', userId);
+                    updateUserStatus(userId, 'disconnected', '连接失败');
+                    users[userId].connected = false;
+                });
+
+                // 断开连接
+                socket.on('disconnect', (reason) => {
+                    log(`🔌 用户${userId} 断开连接: ${reason}`, 'info', userId);
+                    updateUserStatus(userId, 'disconnected', '已断开');
+                    users[userId].connected = false;
+                });
+
+                // 接收消息
+                socket.on('message', (message) => {
+                    log(`📥 用户${userId} 收到消息事件:`, 'success', userId);
+                    log(`   消息内容: "${message.content}"`, 'success', userId);
+                    log(`   发送者: ${message.sender?.username || message.sender?.name || 'Unknown'}`, 'success', userId);
+                    log(`   消息ID: ${message.id || 'No ID'}`, 'success', userId);
+                    log(`   完整消息: ${JSON.stringify(message)}`, 'info', userId);
+                });
+
+                // 用户加入成功
+                socket.on('user:joined', (data) => {
+                    log(`🎉 用户${userId} 加入成功! 当前在线用户: ${data.onlineUsers?.length || 0}`, 'success', userId);
+                    if (data.onlineUsers) {
+                        const usernames = data.onlineUsers.map(u => u.username || u.name).join(', ');
+                        log(`👥 用户${userId} 看到在线用户: ${usernames}`, 'info', userId);
+                    }
+                });
+
+                // 新用户加入通知
+                socket.on('user:new-member-joined', (data) => {
+                    log(`👋 用户${userId} 看到新用户加入: ${data.newMember?.username}`, 'info', userId);
+                });
+
+                // 用户离开通知
+                socket.on('user:left', (data) => {
+                    log(`👋 用户${userId} 看到用户离开: ${data.user?.username}`, 'info', userId);
+                });
+
+                // 输入状态
+                socket.on('typing_start', (data) => {
+                    log(`⌨️ 用户${userId} 看到 ${data.userName} 开始输入`, 'info', userId);
+                });
+
+                socket.on('typing_stop', (data) => {
+                    log(`⌨️ 用户${userId} 看到用户停止输入`, 'info', userId);
+                });
+
+            } catch (error) {
+                log(`❌ 用户${userId} 连接异常: ${error.message}`, 'error', userId);
+                updateUserStatus(userId, 'disconnected', '连接异常');
+            }
+        }
+
+        // 断开用户
+        function disconnectUser(userId) {
+            if (users[userId].socket) {
+                users[userId].socket.disconnect();
+                users[userId].socket = null;
+            }
+            users[userId].connected = false;
+            updateUserStatus(userId, 'disconnected', '已断开');
+            log(`🔌 用户${userId} 手动断开连接`, 'info', userId);
+        }
+
+        // 发送消息
+        function sendMessage(userId) {
+            const messageInput = document.getElementById(`user${userId}-message`);
+            const content = messageInput.value.trim();
+            
+            if (!content) {
+                log(`⚠️ 用户${userId} 消息内容为空`, 'error', userId);
+                return;
+            }
+
+            if (!users[userId].connected || !users[userId].socket) {
+                log(`❌ 用户${userId} 未连接，无法发送消息`, 'error', userId);
+                return;
+            }
+
+            log(`📤 用户${userId} 发送消息: "${content}"`, 'info', userId);
+
+            // 设置超时检测
+            const messageTimeout = setTimeout(() => {
+                log(`⏰ 用户${userId} 消息发送超时 (10秒)`, 'error', userId);
+            }, 10000);
+
+            // 发送消息到服务器
+            users[userId].socket.emit('send_message', {
+                content,
+                timestamp: new Date().toISOString()
+            }, (response) => {
+                clearTimeout(messageTimeout);
+                log(`🔄 用户${userId} 收到服务器响应:`, 'info', userId);
+                log(`   响应内容: ${JSON.stringify(response)}`, 'info', userId);
+                
+                if (response && response.success) {
+                    log(`✅ 用户${userId} 消息发送成功: ${response.message?.id}`, 'success', userId);
+                    messageInput.value = ''; // 清空输入框
+                } else {
+                    log(`❌ 用户${userId} 消息发送失败: ${response?.error || 'No response or error'}`, 'error', userId);
+                }
+            });
+
+            // 记录发送的原始数据
+            log(`📋 用户${userId} 发送数据: ${JSON.stringify({content, timestamp: new Date().toISOString()})}`, 'info', userId);
+        }
+
+        // Enter键发送消息
+        function handleEnter(event, userId) {
+            if (event.key === 'Enter') {
+                sendMessage(userId);
+            }
+        }
+
+        // 连接所有用户
+        async function connectAllUsers() {
+            log('🚀 开始连接所有用户...', 'info');
+            for (let i = 1; i <= 3; i++) {
+                connectUser(i);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒
+            }
+        }
+
+        // 断开所有用户
+        function disconnectAllUsers() {
+            log('🛑 断开所有用户连接...', 'info');
+            for (let i = 1; i <= 3; i++) {
+                disconnectUser(i);
+            }
+        }
+
+        // 清空日志
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            log('🧹 日志已清空', 'info');
+        }
+
+        // 测试场景1: 顺序连接
+        async function testScenario1() {
+            log('🎬 开始测试场景1: 顺序连接', 'info');
+            clearLogs();
+            
+            log('👤 连接用户1...', 'info');
+            connectUser(1);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            log('👤 连接用户2...', 'info');
+            connectUser(2);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            log('👤 连接用户3...', 'info');
+            connectUser(3);
+        }
+
+        // 测试场景2: 消息对话
+        async function testScenario2() {
+            log('🎬 开始测试场景2: 消息对话', 'info');
+            
+            // 确保用户都已连接
+            if (!users[1].connected || !users[2].connected || !users[3].connected) {
+                log('⚠️ 请先连接所有用户', 'error');
+                return;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 用户1发消息
+            document.getElementById('user1-message').value = '大家好！我是用户1';
+            sendMessage(1);
+            
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 用户2回复
+            document.getElementById('user2-message').value = '你好用户1！我是用户2';
+            sendMessage(2);
+            
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 用户3加入对话
+            document.getElementById('user3-message').value = '大家好！我也来聊天了';
+            sendMessage(3);
+        }
+
+        // 测试场景3: 快速消息
+        async function testScenario3() {
+            log('🎬 开始测试场景3: 快速消息', 'info');
+            
+            if (!users[1].connected) {
+                log('⚠️ 请先连接用户1', 'error');
+                return;
+            }
+
+            const messages = [
+                '这是第一条快速消息',
+                '这是第二条快速消息',
+                '这是第三条快速消息'
+            ];
+
+            for (let i = 0; i < messages.length; i++) {
+                document.getElementById('user1-message').value = messages[i];
+                sendMessage(1);
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+
+        // 显示连接信息
+        function showConnectionInfo() {
+            log('📊 当前连接状态:', 'info');
+            for (let i = 1; i <= 3; i++) {
+                const socket = users[i].socket;
+                const connected = users[i].connected;
+                const socketId = socket?.id || 'N/A';
+                const transport = socket?.io?.engine?.transport?.name || 'N/A';
+                const readyState = socket?.connected || false;
+                log(`  用户${i}: ${connected ? '已连接' : '未连接'} | Socket ID: ${socketId} | 传输: ${transport} | 就绪: ${readyState}`, 'info');
+            }
+        }
+
+        // 测试消息发送功能
+        function testMessageSending() {
+            log('🧪 开始测试消息发送功能...', 'info');
+            
+            // 检查哪些用户已连接
+            const connectedUsers = [];
+            for (let i = 1; i <= 3; i++) {
+                if (users[i].connected) {
+                    connectedUsers.push(i);
+                }
+            }
+            
+            if (connectedUsers.length === 0) {
+                log('❌ 没有连接的用户，请先连接用户', 'error');
+                return;
+            }
+            
+            log(`📋 发现 ${connectedUsers.length} 个已连接用户: ${connectedUsers.join(', ')}`, 'info');
+            
+            // 让第一个连接的用户发送测试消息
+            const testUserId = connectedUsers[0];
+            const testMessage = `测试消息 - ${new Date().toLocaleTimeString()}`;
+            
+            document.getElementById(`user${testUserId}-message`).value = testMessage;
+            log(`🎯 让用户${testUserId}发送测试消息...`, 'info');
+            sendMessage(testUserId);
+        }
+
+        // 页面加载完成后的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🌟 多用户聊天测试工具已就绪', 'success');
+            log('💡 使用步骤:', 'info');
+            log('  1. 点击"连接所有用户"或单独连接每个用户', 'info');
+            log('  2. 在各个用户输入框中输入消息并发送', 'info');
+            log('  3. 观察日志查看消息传递情况', 'info');
+            log('  4. 尝试不同的测试场景', 'info');
+        });
+    </script>
+</body>
+</html>

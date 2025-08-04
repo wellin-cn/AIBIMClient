@@ -297,4 +297,206 @@ A: `user:joined` 的数据格式保持不变，新增的 `user:new-member-joined
 
 ---
 
-**请确保在规定时间内完成客户端更新，以获得最佳的多用户聊天体验！**
+## 🆕 消息发送接收API更新 (v1.2.0)
+
+### 新增消息确认机制
+
+为解决消息发送超时问题，服务端现在会对每条消息发送请求进行确认响应：
+
+#### 1. 消息发送成功确认
+**事件名**: `message:sent`
+
+**数据结构**:
+```typescript
+interface MessageSentData {
+  tempId: string        // 临时ID，用于客户端关联
+  messageId: string     // 服务端生成的消息ID
+  timestamp: number     // 消息创建时间戳
+  status: 'success'     // 发送状态
+}
+```
+
+**示例数据**:
+```json
+{
+  "tempId": "temp_1754285293944",
+  "messageId": "8fc1ae0e-cf36-428f-b55d-45881fb78024",
+  "timestamp": 1754285293955,
+  "status": "success"
+}
+```
+
+#### 2. 消息发送失败通知
+**事件名**: `message:send:error`
+
+**数据结构**:
+```typescript
+interface MessageSendErrorData {
+  tempId: string        // 临时ID
+  code: string          // 错误代码
+  message: string       // 错误描述
+  details?: any         // 详细错误信息
+}
+```
+
+**常见错误代码**:
+- `USER_NOT_FOUND`: 用户未找到
+- `RATE_LIMIT`: 消息发送频率限制
+- `SEND_FAILED`: 发送失败
+- `VALIDATION_ERROR`: 数据验证失败
+
+### 客户端实现示例
+
+```javascript
+class MessageHandler {
+  constructor(socket) {
+    this.socket = socket;
+    this.pendingMessages = new Map(); // 存储待确认的消息
+  }
+  
+  // 发送消息
+  sendMessage(content) {
+    const tempId = 'temp_' + Date.now();
+    const messageData = {
+      type: 'text',
+      content: content,
+      timestamp: Date.now(),
+      tempId: tempId
+    };
+    
+    // 存储待确认的消息
+    this.pendingMessages.set(tempId, {
+      data: messageData,
+      sentAt: Date.now(),
+      timeout: setTimeout(() => {
+        this.handleMessageTimeout(tempId);
+      }, 10000) // 10秒超时
+    });
+    
+    // 发送消息
+    this.socket.emit('message:send', messageData);
+  }
+  
+  // 监听消息发送成功确认
+  onMessageSent(data) {
+    const pending = this.pendingMessages.get(data.tempId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      this.pendingMessages.delete(data.tempId);
+      
+      // 更新UI显示消息已发送
+      this.updateMessageStatus(data.tempId, 'sent', data.messageId);
+    }
+  }
+  
+  // 监听消息发送失败
+  onMessageSendError(data) {
+    const pending = this.pendingMessages.get(data.tempId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      this.pendingMessages.delete(data.tempId);
+      
+      // 显示错误并允许重试
+      this.showErrorMessage(data.message);
+      this.updateMessageStatus(data.tempId, 'failed');
+    }
+  }
+  
+  // 处理消息超时
+  handleMessageTimeout(tempId) {
+    const pending = this.pendingMessages.get(tempId);
+    if (pending) {
+      this.pendingMessages.delete(tempId);
+      this.updateMessageStatus(tempId, 'timeout');
+      this.showErrorMessage('消息发送超时，请重试');
+    }
+  }
+  
+  // 监听接收到的消息
+  onMessageReceived(data) {
+    this.displayMessage(data);
+  }
+  
+  // 设置事件监听
+  setupEventListeners() {
+    this.socket.on('message:sent', (data) => this.onMessageSent(data));
+    this.socket.on('message:send:error', (data) => this.onMessageSendError(data));
+    this.socket.on('message:received', (data) => this.onMessageReceived(data));
+  }
+}
+```
+
+### 完整的事件监听列表
+
+客户端需要监听以下所有事件：
+
+```javascript
+// 用户相关事件
+socket.on('user:joined', (data) => { /* 自己登录成功 */ });
+socket.on('user:new-member-joined', (data) => { /* 新成员加入 */ });
+socket.on('user:left', (data) => { /* 用户离开 */ });
+socket.on('users:update', (data) => { /* 用户列表更新 */ });
+
+// 消息相关事件
+socket.on('message:sent', (data) => { /* 消息发送成功确认 */ });
+socket.on('message:send:error', (data) => { /* 消息发送失败 */ });
+socket.on('message:received', (data) => { /* 接收到消息 */ });
+
+// 错误事件
+socket.on('error', (data) => { /* 一般错误 */ });
+socket.on('connect_error', (error) => { /* 连接错误 */ });
+socket.on('disconnect', (reason) => { /* 连接断开 */ });
+```
+
+---
+
+**🎯 重要更新**: 消息发送超时问题已修复，客户端现在可以收到明确的发送确认或错误通知。请按照上述示例更新客户端代码以获得最佳体验！
+
+---
+
+## ✅ 客户端适配状态
+
+### 已完成的适配工作
+
+1. **SocketService 更新** ✅
+   - 添加了 `user:new-member-joined` 事件监听
+   - 修改了 `user:joined` 事件处理逻辑（仅用于自身登录确认）
+   - 添加了 `user:left` 事件的新API规范支持
+   - 保留了旧事件的兼容性支持
+
+2. **Hook 层更新** ✅
+   - 更新了 `useSocket` Hook 以正确处理新的事件分离逻辑
+   - 添加了专门的新成员加入监听器
+   - 集成了通知系统
+
+3. **通知系统** ✅
+   - 创建了 `useNotifications` Hook 来管理通知
+   - 创建了 `Notification` 和 `NotificationManager` UI组件
+   - 在主聊天页面集成了通知显示
+   - 添加了用户加入/离开的专用通知方法
+
+4. **类型定义完善** ✅
+   - 更新了 Socket 事件接口以匹配新API规范
+   - 保持了与现有 `shared/types/user.ts` 中定义的类型一致性
+   - 添加了通知相关的类型定义
+
+### 具体实现的功能
+
+- ✅ 新成员加入时，现有用户会收到通知（系统消息 + 桌面通知）
+- ✅ 用户自己登录时不会收到自己的加入通知
+- ✅ 登录成功时显示欢迎通知
+- ✅ 连接失败时显示错误通知
+- ✅ 用户离开时显示离开通知
+- ✅ 通知支持自动消失和手动关闭
+- ✅ 通知系统支持不同类型（成功、错误、警告、信息）
+
+### 测试建议
+
+客户端现在完全符合新的API规范，建议进行以下测试：
+
+1. **多用户连接测试**：多个用户依次登录，验证新成员通知是否正确显示
+2. **登录体验测试**：验证登录成功通知和初始用户列表加载
+3. **用户离开测试**：验证用户离开时的通知显示和用户列表更新
+4. **通知系统测试**：验证通知的显示、自动消失和手动关闭功能
+
+客户端已全面适配新的 Socket.io 事件规范，可以提供最佳的多用户聊天体验！

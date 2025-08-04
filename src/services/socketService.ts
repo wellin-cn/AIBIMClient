@@ -16,9 +16,10 @@ export interface SocketEvents {
   message: (message: Message) => void
   message_status: (data: { messageId: string; status: MessageStatus }) => void
   
-  // 用户事件
-  user_joined: (user: User) => void
-  user_left: (user: User) => void
+  // 用户事件 - 更新为新API规范
+  'user:joined': (data: { user: User; onlineUsers: User[]; serverInfo?: any }) => void
+  'user:new-member-joined': (data: { newMember: User; onlineUsers: User[] }) => void
+  'user:left': (data: { user: User; onlineUsers: User[] }) => void
   user_status_changed: (data: { userId: string; isOnline: boolean }) => void
   
   // 输入状态事件
@@ -37,6 +38,7 @@ export class SocketService {
   private typingListeners: Array<(userId: string, isTyping: boolean) => void> = []
   private systemMessageListeners: Array<(message: string) => void> = []
   private authListeners: Array<(user: User | null, error?: string) => void> = []
+  private newMemberListeners: Array<(newMember: User, allUsers: User[]) => void> = []
   
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
@@ -112,9 +114,9 @@ export class SocketService {
           reject(error)
         })
 
-        // 用户加入成功（这是服务端的实际响应事件）
+        // 用户加入成功（根据新API规范，仅用于自身登录确认）
         this.socket.on('user:joined', (data: any) => {
-          console.log('🎉 User joined successfully:', data)
+          console.log('🎉 Self login successful (user:joined):', data)
           
           // 规范化服务器返回的用户对象，确保符合客户端类型
           const normalizedUser = {
@@ -127,10 +129,10 @@ export class SocketService {
             lastSeen: data.user?.lastSeen ? new Date(data.user.lastSeen) : new Date()
           }
           
-          console.log('📝 Normalized user object:', normalizedUser)
+          console.log('📝 Normalized current user object:', normalizedUser)
           this.notifyAuthListeners(normalizedUser)
           
-          // 更新在线用户列表，规范化每个用户对象
+          // 更新初始在线用户列表
           if (data.onlineUsers && Array.isArray(data.onlineUsers)) {
             const normalizedUsers = data.onlineUsers.map((user: any) => ({
               id: user.id || Date.now().toString(),
@@ -142,8 +144,13 @@ export class SocketService {
               lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
             }))
             
-            console.log('👥 Normalized online users:', normalizedUsers)
+            console.log('👥 Initial online users list:', normalizedUsers)
             this.notifyUserListeners(normalizedUsers)
+          }
+          
+          // 显示服务器信息（如果有）
+          if (data.serverInfo) {
+            console.log('🖥️ Server info:', data.serverInfo)
           }
         })
 
@@ -184,7 +191,22 @@ export class SocketService {
   // 发送消息
   sendMessage(content: string): Promise<Message> {
     return new Promise((resolve, reject) => {
+      console.log('🔗 [SocketService] sendMessage called:', {
+        content,
+        contentLength: content.length,
+        isConnected: this.socket?.connected,
+        socketId: this.socket?.id,
+        transportType: this.socket?.io?.engine?.transport?.name,
+        timestamp: new Date().toISOString()
+      })
+
       if (!this.socket?.connected) {
+        console.error('❌ [SocketService] Socket not connected:', {
+          hasSocket: !!this.socket,
+          connected: this.socket?.connected,
+          socketId: this.socket?.id,
+          readyState: this.socket?.io?.engine?.readyState
+        })
         reject(new Error('Socket not connected'))
         return
       }
@@ -194,11 +216,43 @@ export class SocketService {
         timestamp: new Date().toISOString(),
       }
 
+      console.log('📤 [SocketService] Emitting send_message event:', {
+        messageData,
+        socketId: this.socket.id,
+        transport: this.socket.io?.engine?.transport?.name
+      })
+
+      // 设置超时处理
+      const timeout = setTimeout(() => {
+        console.error('⏰ [SocketService] Message send timeout after 10 seconds')
+        reject(new Error('Message send timeout'))
+      }, 10000)
+
       this.socket.emit('send_message', messageData, (response: any) => {
-        if (response.success) {
+        clearTimeout(timeout)
+        
+        console.log('📨 [SocketService] Received response from server:', {
+          response,
+          hasSuccess: response?.success !== undefined,
+          hasMessage: !!response?.message,
+          hasError: !!response?.error,
+          timestamp: new Date().toISOString()
+        })
+
+        if (response && response.success) {
+          console.log('✅ [SocketService] Message sent successfully:', {
+            messageId: response.message?.id,
+            serverTimestamp: response.message?.timestamp
+          })
           resolve(response.message)
         } else {
-          reject(new Error(response.error || 'Failed to send message'))
+          const errorMessage = response?.error || 'Failed to send message'
+          console.error('❌ [SocketService] Server returned error:', {
+            error: errorMessage,
+            fullResponse: response,
+            originalContent: content
+          })
+          reject(new Error(errorMessage))
         }
       })
     })
@@ -253,8 +307,18 @@ export class SocketService {
 
     // 接收消息
     this.socket.on('message', (message: Message) => {
-      console.log('Received message:', message)
+      console.log('📥 [SocketService] Received message event:', {
+        messageId: message.id,
+        content: message.content,
+        senderName: message.sender?.name,
+        senderId: message.sender?.id,
+        timestamp: message.timestamp,
+        type: message.type,
+        status: message.status,
+        fullMessage: message
+      })
       this.notifyMessageListeners(message)
+      console.log('📢 [SocketService] Notified message listeners')
     })
 
     // 消息状态更新
@@ -263,21 +327,95 @@ export class SocketService {
       // 这里可以更新消息状态
     })
 
-    // 用户加入
-    this.socket.on('user_joined', (user: User) => {
-      console.log('User joined:', user)
-      this.notifySystemMessageListeners(`${user.name} 加入了聊天`)
-    })
+      // 新成员加入通知 - 根据新API规范添加
+  this.socket.on('user:new-member-joined', (data: any) => {
+    console.log('🎉 New member joined:', data.newMember)
+    console.log('📋 Updated user list:', data.onlineUsers)
+    
+    // 更新在线用户列表
+    if (data.onlineUsers && Array.isArray(data.onlineUsers)) {
+      const normalizedUsers = data.onlineUsers.map((user: any) => ({
+        id: user.id || Date.now().toString(),
+        name: user.name || user.username || 'Unknown User',
+        username: user.username || user.name || 'unknown',
+        status: user.status || 'online',
+        isOnline: user.isOnline ?? true,
+        avatar: user.avatar || undefined,
+        lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
+      }))
+      
+      this.notifyUserListeners(normalizedUsers)
+    }
+    
+    // 显示新成员加入通知
+    const newMemberName = data.newMember?.username || data.newMember?.name || 'Unknown User'
+    this.notifySystemMessageListeners(`${newMemberName} 加入了聊天室`)
+    
+    // 通知新成员加入监听器
+    if (data.newMember) {
+      const normalizedNewMember = {
+        id: data.newMember.id || Date.now().toString(),
+        name: data.newMember.name || data.newMember.username || 'Unknown User',
+        username: data.newMember.username || data.newMember.name || 'unknown',
+        status: data.newMember.status || 'online',
+        isOnline: data.newMember.isOnline ?? true,
+        avatar: data.newMember.avatar || undefined,
+        lastSeen: data.newMember.lastSeen ? new Date(data.newMember.lastSeen) : new Date()
+      }
+      
+      // 获取标准化的用户列表
+      const allUsers = data.onlineUsers && Array.isArray(data.onlineUsers) ? 
+        data.onlineUsers.map((user: any) => ({
+          id: user.id || Date.now().toString(),
+          name: user.name || user.username || 'Unknown User',
+          username: user.username || user.name || 'unknown',
+          status: user.status || 'online',
+          isOnline: user.isOnline ?? true,
+          avatar: user.avatar || undefined,
+          lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
+        })) : []
+        
+      this.notifyNewMemberListeners(normalizedNewMember, allUsers)
+    }
+  })
 
-    // 用户离开
-    this.socket.on('user_left', (user: User) => {
-      console.log('User left:', user)
-      this.notifySystemMessageListeners(`${user.name} 离开了聊天`)
-    })
+  // 用户离开事件 - 适配新API规范
+  this.socket.on('user:left', (data: any) => {
+    console.log('👋 User left:', data.user)
+    
+    // 更新在线用户列表
+    if (data.onlineUsers && Array.isArray(data.onlineUsers)) {
+      const normalizedUsers = data.onlineUsers.map((user: any) => ({
+        id: user.id || Date.now().toString(),
+        name: user.name || user.username || 'Unknown User',
+        username: user.username || user.name || 'unknown',
+        status: user.status || 'online',
+        isOnline: user.isOnline ?? true,
+        avatar: user.avatar || undefined,
+        lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
+      }))
+      
+      this.notifyUserListeners(normalizedUsers)
+    }
+    
+    // 显示用户离开通知
+    const leftUserName = data.user?.username || data.user?.name || 'Unknown User'
+    this.notifySystemMessageListeners(`${leftUserName} 离开了聊天室`)
+  })
+
+  // 保留旧事件兼容性
+  this.socket.on('user_joined', (user: User) => {
+    console.log('Legacy user_joined event (deprecated):', user)
+  })
 
     // 用户状态变化
     this.socket.on('user_status_changed', (data) => {
       console.log('User status changed:', data)
+    })
+
+    // 保留旧的user_left事件兼容性
+    this.socket.on('user_left', (user: User) => {
+      console.log('Legacy user_left event (deprecated):', user)
     })
 
     // 输入状态开始
@@ -333,6 +471,7 @@ export class SocketService {
     this.typingListeners = []
     this.systemMessageListeners = []
     this.authListeners = []
+    this.newMemberListeners = []
   }
 
   // 添加连接状态监听器
@@ -401,6 +540,17 @@ export class SocketService {
     }
   }
 
+  // 添加新成员加入监听器
+  onNewMemberJoined(listener: (newMember: User, allUsers: User[]) => void): () => void {
+    this.newMemberListeners.push(listener)
+    return () => {
+      const index = this.newMemberListeners.indexOf(listener)
+      if (index > -1) {
+        this.newMemberListeners.splice(index, 1)
+      }
+    }
+  }
+
   // 通知连接状态监听器
   private notifyConnectionListeners(status: ConnectionStatus): void {
     this.connectionListeners.forEach(listener => listener(status))
@@ -431,6 +581,11 @@ export class SocketService {
     this.authListeners.forEach(listener => listener(user, error))
   }
 
+  // 通知新成员加入监听器
+  private notifyNewMemberListeners(newMember: User, allUsers: User[]): void {
+    this.newMemberListeners.forEach(listener => listener(newMember, allUsers))
+  }
+
   // 获取连接状态
   get isConnected(): boolean {
     return this.socket?.connected || false
@@ -440,7 +595,55 @@ export class SocketService {
   get socketId(): string | undefined {
     return this.socket?.id
   }
+
+  // 诊断函数 - 用于调试
+  diagnose(): any {
+    const diagnosticInfo = {
+      timestamp: new Date().toISOString(),
+      connection: {
+        isConnected: this.isConnected,
+        socketId: this.socketId,
+        hasSocket: !!this.socket,
+        connected: this.socket?.connected,
+        transport: this.socket?.io?.engine?.transport?.name,
+        readyState: this.socket?.io?.engine?.readyState,
+        ping: (this.socket?.io?.engine as any)?.ping,
+        url: (this.socket?.io as any)?.uri
+      },
+      listeners: {
+        connectionListeners: this.connectionListeners.length,
+        messageListeners: this.messageListeners.length,
+        userListeners: this.userListeners.length,
+        typingListeners: this.typingListeners.length,
+        systemMessageListeners: this.systemMessageListeners.length,
+        authListeners: this.authListeners.length,
+        newMemberListeners: this.newMemberListeners.length
+      },
+      reconnection: {
+        attempts: this.reconnectAttempts,
+        maxAttempts: this.maxReconnectAttempts,
+        delay: this.reconnectDelay
+      }
+    }
+
+    console.log('🔍 [SocketService] Full Diagnostic Report:', diagnosticInfo)
+    
+    // 也在全局对象上暴露，方便在控制台访问
+    if (typeof window !== 'undefined') {
+      (window as any).socketDiagnostic = diagnosticInfo
+      console.log('💡 Diagnostic info saved to window.socketDiagnostic')
+    }
+    
+    return diagnosticInfo
+  }
 }
 
 // 导出单例实例
 export const socketService = new SocketService()
+
+// 在开发环境中将 socketService 暴露到全局，方便调试
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  (window as any).socketService = socketService
+  console.log('🛠️ [SocketService] Service exposed to window.socketService for debugging')
+  console.log('💡 Try: window.socketService.diagnose() to see diagnostic info')
+}

@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { socketService } from '../services/socketService'
 import { useAuthStore, useChatStore } from '../store'
 import { ConnectionStatus, MessageType, MessageStatus } from '../types'
+import { useNotifications } from './useNotifications'
 
 export const useSocket = () => {
   const {
@@ -20,6 +21,14 @@ export const useSocket = () => {
     clearMessages,
     clearError,
   } = useChatStore()
+
+  const {
+    addUserJoinedNotification,
+    addError,
+    addSuccess,
+    notifications,
+    dismissNotification,
+  } = useNotifications()
 
   // 连接到服务器
   const connect = useCallback(async (serverUrl: string, username: string) => {
@@ -43,12 +52,14 @@ export const useSocket = () => {
       
     } catch (error) {
       console.error('Connection failed:', error)
-      setLoginError(error instanceof Error ? error.message : '连接失败')
+      const errorMessage = error instanceof Error ? error.message : '连接失败'
+      setLoginError(errorMessage)
       setConnectionStatus(ConnectionStatus.DISCONNECTED)
+      addError(`连接失败: ${errorMessage}`, '连接错误')
     } finally {
       setLoggingIn(false)
     }
-  }, [setLoggingIn, setLoginError, setConnectionStatus, setUsers, setCurrentUser])
+  }, [setLoggingIn, setLoginError, setConnectionStatus, setUsers, setCurrentUser, addError])
 
   // 断开连接
   const disconnect = useCallback(() => {
@@ -60,7 +71,22 @@ export const useSocket = () => {
 
   // 发送消息
   const sendMessage = useCallback(async (content: string) => {
+    console.log('🚀 [useSocket] sendMessage called:', {
+      content,
+      contentLength: content.length,
+      isConnected: socketService.isConnected,
+      currentUser: currentUser?.name,
+      timestamp: new Date().toISOString()
+    })
+
     if (!socketService.isConnected || !currentUser) {
+      const errorMsg = !socketService.isConnected ? 'Socket not connected' : 'User not authenticated'
+      console.error('❌ [useSocket] Cannot send message:', {
+        error: errorMsg,
+        isConnected: socketService.isConnected,
+        hasCurrentUser: !!currentUser,
+        socketId: socketService.socketId
+      })
       throw new Error('Not connected or not authenticated')
     }
 
@@ -69,26 +95,51 @@ export const useSocket = () => {
       id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       content,
       sender: currentUser,
-      timestamp: Date.now(),
+      timestamp: new Date(),
       type: MessageType.TEXT,
       status: MessageStatus.SENDING,
     }
 
+    console.log('📝 [useSocket] Created temp message:', {
+      tempId: tempMessage.id,
+      content: tempMessage.content,
+      senderName: tempMessage.sender.name,
+      status: tempMessage.status
+    })
+
     // 立即显示在界面上
+    console.log('💾 [useSocket] Adding message to store...')
     addMessage(tempMessage)
 
     try {
       // 发送到服务器
+      console.log('📡 [useSocket] Calling socketService.sendMessage...')
       const serverMessage = await socketService.sendMessage(content)
+      console.log('✅ [useSocket] Received server response:', {
+        serverId: serverMessage.id,
+        tempId: tempMessage.id,
+        serverTimestamp: serverMessage.timestamp
+      })
       
       // 更新为服务器返回的消息
+      console.log('🔄 [useSocket] Updating message in store...')
       updateMessage(tempMessage.id, {
         id: serverMessage.id,
         status: MessageStatus.SENT,
         timestamp: serverMessage.timestamp,
       })
+      console.log('✅ [useSocket] Message successfully updated!')
     } catch (error) {
+      console.error('❌ [useSocket] Send message failed:', {
+        error: error instanceof Error ? error.message : error,
+        errorStack: error instanceof Error ? error.stack : undefined,
+        tempMessageId: tempMessage.id,
+        content,
+        timestamp: new Date().toISOString()
+      })
+      
       // 发送失败，更新状态
+      console.log('🔄 [useSocket] Updating message status to FAILED...')
       updateMessage(tempMessage.id, {
         status: MessageStatus.FAILED,
       })
@@ -113,12 +164,49 @@ export const useSocket = () => {
         name: 'System',
         isOnline: true,
       },
-      timestamp: Date.now(),
+      timestamp: new Date(),
       type: MessageType.SYSTEM,
       status: MessageStatus.SENT,
     }
     addMessage(systemMessage)
   }, [addMessage])
+
+  // 诊断函数 - 用于调试
+  const diagnoseConnection = useCallback(() => {
+    const diagnosticInfo = {
+      timestamp: new Date().toISOString(),
+      socket: {
+        isConnected: socketService.isConnected,
+        socketId: socketService.socketId,
+        transport: (socketService as any).socket?.io?.engine?.transport?.name,
+        readyState: (socketService as any).socket?.io?.engine?.readyState,
+        hasSocket: !!(socketService as any).socket
+      },
+      user: {
+        hasCurrentUser: !!currentUser,
+        userName: currentUser?.name,
+        userId: currentUser?.id
+      },
+      store: {
+        connectionStatus: useChatStore.getState().connectionStatus,
+        messageCount: useChatStore.getState().messages.length,
+        userCount: useChatStore.getState().users.length
+      }
+    }
+
+    console.log('🔍 [useSocket] Connection Diagnosis:', diagnosticInfo)
+    return diagnosticInfo
+  }, [currentUser])
+
+  // 自动诊断 - 在组件挂载时执行
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      console.log('🏥 [useSocket] Auto-diagnosing connection state...')
+      diagnoseConnection()
+    }, 2000) // 2秒后执行诊断
+
+    return () => clearTimeout(timer)
+  }, [])
 
   // 设置Socket事件监听器 - 只在组件挂载时执行一次
   useEffect(() => {
@@ -141,13 +229,23 @@ export const useSocket = () => {
         console.log('🎉 Authentication successful via server response:', user)
         setCurrentUser(user)
         setLoginError(null)
-        addSystemMessage(`${user.name} 已连接到聊天室`)
+        // 显示登录成功通知
+        addSuccess(`欢迎，${user.name}！`, '登录成功')
+        console.log('✅ User authenticated successfully, waiting for user list updates...')
       }
     })
 
     // 接收消息
     const unsubscribeMessage = socketService.onMessage((message) => {
+      console.log('📥 [useSocket] Received message via listener:', {
+        messageId: message.id,
+        content: message.content,
+        senderName: message.sender?.name,
+        timestamp: message.timestamp,
+        isFromCurrentUser: currentUser?.id === message.sender?.id
+      })
       addMessage(message)
+      console.log('💾 [useSocket] Message added to store')
     })
 
     // 用户列表更新
@@ -165,6 +263,22 @@ export const useSocket = () => {
       addSystemMessage(message)
     })
 
+    // 新成员加入通知 - 适配新API规范
+    const unsubscribeNewMember = socketService.onNewMemberJoined((newMember, allUsers) => {
+      console.log('🎉 New member joined via hook:', newMember.name)
+      
+      // 更新用户列表
+      setUsers(allUsers)
+      
+      // 显示加入通知（除了自己）
+      if (currentUser && newMember.id !== currentUser.id) {
+        // 显示系统消息
+        addSystemMessage(`${newMember.name} 加入了聊天室`)
+        // 显示通知提醒
+        addUserJoinedNotification(newMember.name)
+      }
+    })
+
     // 清理函数
     return () => {
       console.log('🧹 Cleaning up socket event listeners...')
@@ -174,6 +288,7 @@ export const useSocket = () => {
       unsubscribeUsers()
       unsubscribeTyping()
       unsubscribeSystemMessage()
+      unsubscribeNewMember()
     }
   }, []) // 空依赖数组，只在挂载时执行一次
 
@@ -197,5 +312,12 @@ export const useSocket = () => {
     sendMessage,
     sendTypingStatus,
     addSystemMessage,
+    
+    // 通知系统
+    notifications,
+    dismissNotification,
+    
+    // 调试功能
+    diagnoseConnection,
   }
 }
