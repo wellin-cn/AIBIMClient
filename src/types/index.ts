@@ -2,6 +2,7 @@
 export interface User {
   id: string
   name: string
+  username: string
   avatar?: string
   isOnline: boolean
   lastSeen?: Date
@@ -27,6 +28,8 @@ export enum MessageType {
 export enum MessageStatus {
   SENDING = 'sending',
   SENT = 'sent',
+  DELIVERED = 'delivered',
+  RECEIVED = 'received',
   FAILED = 'failed'
 }
 

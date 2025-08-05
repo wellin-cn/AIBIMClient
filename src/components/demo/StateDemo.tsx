@@ -42,6 +42,7 @@ export const StateDemo: React.FC = () => {
     const user = {
       id: `user_${Date.now()}`,
       name: demoUsername,
+      username: demoUsername,
       isOnline: true,
     }
     setCurrentUser(user)
@@ -72,6 +73,7 @@ export const StateDemo: React.FC = () => {
     const demoUser = {
       id: `user_demo_${Date.now()}`,
       name: `用户${users.length + 1}`,
+      username: `user${users.length + 1}`,
       isOnline: true,
     }
     handleUserJoined(demoUser)

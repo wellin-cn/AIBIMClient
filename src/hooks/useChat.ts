@@ -68,6 +68,7 @@ export const useChat = () => {
     const systemUser: User = {
       id: 'system',
       name: 'System',
+      username: 'system',
       isOnline: true,
     }
 

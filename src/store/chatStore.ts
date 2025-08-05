@@ -47,6 +47,9 @@ export interface ChatActions {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   clearError: () => void
+  
+  // 调试功能
+  getMessageStats: () => { total: number; uniqueIds: number; duplicateContent: number }
 }
 
 export type ChatStore = ChatState & ChatActions
@@ -82,6 +85,41 @@ export const useChatStore = create<ChatStore>()(
           })
           
           set((state) => {
+            // 检查消息是否已存在 - 通过ID或内容+发送者+时间进行去重
+            const exists = state.messages.some(existingMsg => {
+              // 首先通过ID去重
+              if (existingMsg.id === message.id) {
+                console.log('🔄 [ChatStore] Message already exists by ID:', message.id)
+                return true
+              }
+              
+              // 然后通过内容+发送者+时间进行去重（防止重复的相同消息）
+              if (existingMsg.content === message.content && 
+                  existingMsg.sender?.id === message.sender?.id) {
+                const timeDiff = Math.abs(
+                  (existingMsg.timestamp instanceof Date ? existingMsg.timestamp.getTime() : new Date(existingMsg.timestamp).getTime()) - 
+                  (message.timestamp instanceof Date ? message.timestamp.getTime() : new Date(message.timestamp).getTime())
+                )
+                // 如果是1秒内的相同内容消息，认为是重复
+                if (timeDiff < 1000) {
+                  console.log('🔄 [ChatStore] Message already exists by content+sender+time:', {
+                    existingId: existingMsg.id,
+                    newId: message.id,
+                    content: message.content,
+                    timeDiff
+                  })
+                  return true
+                }
+              }
+              
+              return false
+            })
+            
+            if (exists) {
+              console.log('⚠️ [ChatStore] Duplicate message detected, skipping add')
+              return state // 不添加重复消息
+            }
+            
             const newMessages = [...state.messages, message]
             // 保持最近1000条消息
             if (newMessages.length > 1000) {
@@ -105,6 +143,7 @@ export const useChatStore = create<ChatStore>()(
             sender: {
               id: 'system',
               name: 'System',
+              username: 'system',
               isOnline: true,
             },
             timestamp: new Date(),
@@ -282,6 +321,26 @@ export const useChatStore = create<ChatStore>()(
 
         clearError: () => {
           set({ error: null }, false, 'clearError')
+        },
+        
+        // 调试功能 - 统计消息去重情况
+        getMessageStats: () => {
+          const state = useChatStore.getState()
+          const messages = state.messages
+          const total = messages.length
+          const uniqueIds = new Set(messages.map(m => m.id)).size
+          
+          // 检查内容重复的消息
+          const contentMap = new Map()
+          messages.forEach(msg => {
+            const key = `${msg.content}_${msg.sender?.id}`
+            contentMap.set(key, (contentMap.get(key) || 0) + 1)
+          })
+          const duplicateContent = Array.from(contentMap.values()).filter(count => count > 1).length
+          
+          const stats = { total, uniqueIds, duplicateContent }
+          console.log('📊 [ChatStore] Message Statistics:', stats)
+          return stats
         },
       }),
       {

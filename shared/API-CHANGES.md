@@ -6,6 +6,55 @@
 **紧急程度**: 高（影响多用户连接体验）  
 **需要客户端更新**: 是
 
+## 🔥 最新更新：消息发送优化 (2025-08-04)
+
+**影响范围**: 消息发送机制  
+**紧急程度**: 高（修复消息发送超时问题）  
+**需要客户端更新**: 是
+
+### 问题描述
+经过多用户测试发现：
+- 消息发送后无服务器响应
+- 10秒超时错误
+- 消息无法在用户间传播
+
+### 解决方案
+1. **优化消息发送回调机制** ✅ 已完成
+2. **增强错误处理和重试** ✅ 已完成  
+3. **改进连接状态检测** ✅ 已完成
+4. **添加消息队列机制** ✅ 已完成
+
+### 🎯 客户端开发者可以立即使用
+
+📄 **shared/API-CHANGES.md** - 新增API详细说明  
+📖 **shared/docs/CLIENT-MESSAGE-GUIDE.md** - 完整实现指南  
+📱 **shared/docs/REACT-VUE-EXAMPLES.md** - React/Vue 完整示例  
+🔧 **src/hooks/useReliableChat.ts** - 可靠聊天Hook  
+🎨 **src/components/chat/** - UI状态显示组件  
+⚡ **自动重试和错误处理机制** - 完整实现  
+
+### 📋 更新内容详情
+
+#### 1. 新增可靠的消息发送Hook
+- `useReliableChat` (React) 
+- `useReliableChat` (Vue Composition API)
+- 自动重试机制 (3次重试，递增延迟)
+- 消息队列处理
+- 连接状态管理
+
+#### 2. 优化的UI组件
+- `OptimizedMessageInput` - 智能消息输入
+- `MessageStatusIndicator` - 消息状态指示  
+- `ConnectionStatusBanner` - 连接状态横幅
+- 失败重试按钮
+- 队列状态显示
+
+#### 3. 增强的错误处理
+- 超时检测 (15秒)
+- 网络中断恢复
+- 离线消息队列
+- 智能重连机制
+
 ---
 
 ## 📋 变更概述

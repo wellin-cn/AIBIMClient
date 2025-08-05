@@ -162,6 +162,7 @@ export const useSocket = () => {
       sender: {
         id: 'system',
         name: 'System',
+        username: 'system',
         isOnline: true,
       },
       timestamp: new Date(),
@@ -244,8 +245,15 @@ export const useSocket = () => {
         timestamp: message.timestamp,
         isFromCurrentUser: currentUser?.id === message.sender?.id
       })
-      addMessage(message)
-      console.log('💾 [useSocket] Message added to store')
+      
+      // 只有当消息不是来自当前用户时才添加到store
+      // 发送者的消息已经通过sendMessage流程添加过了
+      if (currentUser && message.sender?.id !== currentUser.id) {
+        console.log('📥 [useSocket] Adding received message from other user to store')
+        addMessage(message)
+      } else {
+        console.log('📥 [useSocket] Skipping message from current user (already added locally)')
+      }
     })
 
     // 用户列表更新

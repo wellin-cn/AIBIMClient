@@ -15,6 +15,8 @@ export interface SocketEvents {
   // 消息事件
   message: (message: Message) => void
   message_status: (data: { messageId: string; status: MessageStatus }) => void
+  'message:sent': (data: { tempId: string; messageId: string; timestamp: number; sender?: any; type?: string }) => void
+  'message:send:error': (data: { tempId: string; code: string; message: string }) => void
   
   // 用户事件 - 更新为新API规范
   'user:joined': (data: { user: User; onlineUsers: User[]; serverInfo?: any }) => void
@@ -22,9 +24,10 @@ export interface SocketEvents {
   'user:left': (data: { user: User; onlineUsers: User[] }) => void
   user_status_changed: (data: { userId: string; isOnline: boolean }) => void
   
-  // 输入状态事件
-  typing_start: (data: { userId: string; userName: string }) => void
-  typing_stop: (data: { userId: string }) => void
+  // 输入状态事件 - 使用正确的事件名称格式
+  'typing:start': (data: { userId: string; timestamp: number }) => void
+  'typing:stop': (data: { userId: string; timestamp: number }) => void
+  'typing:update': (data: { typingUsers: { userId: string; userName: string }[] }) => void
   
   // 系统事件
   system_message: (message: string) => void
@@ -43,6 +46,15 @@ export class SocketService {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  
+  // 添加pending消息跟踪
+  private pendingMessages: Map<string, {
+    resolve: (message: Message) => void
+    reject: (error: Error) => void
+    timeout: NodeJS.Timeout
+    content: string
+    sentAt: number
+  }> = new Map()
   
   constructor() {
     this.setupEventListeners()
@@ -211,12 +223,17 @@ export class SocketService {
         return
       }
 
+      // 生成临时消息ID用于跟踪
+      const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)
+      
       const messageData = {
+        type: 'text',
         content: content.trim(),
-        timestamp: new Date().toISOString(),
+        timestamp: Date.now(),
+        tempId: tempId
       }
 
-      console.log('📤 [SocketService] Emitting send_message event:', {
+      console.log('📤 [SocketService] Emitting message:send event:', {
         messageData,
         socketId: this.socket.id,
         transport: this.socket.io?.engine?.transport?.name
@@ -224,37 +241,21 @@ export class SocketService {
 
       // 设置超时处理
       const timeout = setTimeout(() => {
-        console.error('⏰ [SocketService] Message send timeout after 10 seconds')
+        console.error('⏰ [SocketService] Message send timeout after 15 seconds:', tempId)
         reject(new Error('Message send timeout'))
-      }, 10000)
+      }, 15000)
 
-      this.socket.emit('send_message', messageData, (response: any) => {
-        clearTimeout(timeout)
-        
-        console.log('📨 [SocketService] Received response from server:', {
-          response,
-          hasSuccess: response?.success !== undefined,
-          hasMessage: !!response?.message,
-          hasError: !!response?.error,
-          timestamp: new Date().toISOString()
-        })
-
-        if (response && response.success) {
-          console.log('✅ [SocketService] Message sent successfully:', {
-            messageId: response.message?.id,
-            serverTimestamp: response.message?.timestamp
-          })
-          resolve(response.message)
-        } else {
-          const errorMessage = response?.error || 'Failed to send message'
-          console.error('❌ [SocketService] Server returned error:', {
-            error: errorMessage,
-            fullResponse: response,
-            originalContent: content
-          })
-          reject(new Error(errorMessage))
-        }
+      // 存储pending消息信息用于响应匹配
+      this.pendingMessages.set(tempId, {
+        resolve,
+        reject,
+        timeout,
+        content: content.trim(),
+        sentAt: Date.now()
       })
+
+      // 使用正确的事件名称发送消息
+      this.socket.emit('message:send', messageData)
     })
   }
 
@@ -263,9 +264,15 @@ export class SocketService {
     if (!this.socket?.connected) return
 
     if (isTyping) {
-      this.socket.emit('typing_start')
+      this.socket.emit('typing:start', {
+        userId: 'current-user',  // 这里应该使用实际的用户ID
+        timestamp: Date.now()
+      })
     } else {
-      this.socket.emit('typing_stop')
+      this.socket.emit('typing:stop', {
+        userId: 'current-user',  // 这里应该使用实际的用户ID
+        timestamp: Date.now()
+      })
     }
   }
 
@@ -291,10 +298,31 @@ export class SocketService {
   private setupSocketEventListeners(): void {
     if (!this.socket) return
 
+    // 先清理所有可能存在的监听器，防止重复绑定
+    console.log('🧹 [SocketService] Cleaning existing listeners before setup...')
+    this.socket.removeAllListeners('disconnect')
+    this.socket.removeAllListeners('message:received')
+    this.socket.removeAllListeners('message_status')
+    this.socket.removeAllListeners('message:sent')
+    this.socket.removeAllListeners('message:send:error')
+    this.socket.removeAllListeners('user:new-member-joined')
+    this.socket.removeAllListeners('user:left')
+    this.socket.removeAllListeners('typing:start')
+    this.socket.removeAllListeners('typing:stop')
+    this.socket.removeAllListeners('typing:update')
+    this.socket.removeAllListeners('system_message')
+
     // 断开连接
     this.socket.on('disconnect', (reason) => {
       console.log('Socket disconnected:', reason)
       this.notifyConnectionListeners(ConnectionStatus.DISCONNECTED)
+      
+      // 清理所有待处理的消息
+      this.pendingMessages.forEach(pending => {
+        clearTimeout(pending.timeout)
+        pending.reject(new Error('Connection lost'))
+      })
+      this.pendingMessages.clear()
       
       // 自动重连
       if (reason === 'io server disconnect') {
@@ -305,18 +333,33 @@ export class SocketService {
       this.handleReconnect()
     })
 
-    // 接收消息
-    this.socket.on('message', (message: Message) => {
-      console.log('📥 [SocketService] Received message event:', {
-        messageId: message.id,
-        content: message.content,
-        senderName: message.sender?.name,
-        senderId: message.sender?.id,
-        timestamp: message.timestamp,
-        type: message.type,
-        status: message.status,
-        fullMessage: message
+    // 接收消息 - 使用正确的事件名称
+    this.socket.on('message:received', (data: any) => {
+      console.log('📥 [SocketService] Received message:received event:', {
+        messageId: data.id,
+        content: data.content,
+        senderName: data.sender?.username,
+        senderId: data.sender?.id,
+        timestamp: data.timestamp,
+        type: data.type,
+        fullData: data
       })
+      
+      // 将接收到的数据转换为Message格式
+      const message: Message = {
+        id: data.id || `msg_${Date.now()}`,
+        content: data.content,
+        sender: {
+          id: data.sender?.id || 'unknown',
+          name: data.sender?.name || data.sender?.username || 'Unknown User',
+          username: data.sender?.username || data.sender?.name || 'unknown',
+          isOnline: data.sender?.isOnline ?? true
+        },
+        timestamp: new Date(data.timestamp),
+        type: data.type || 'text',
+        status: MessageStatus.RECEIVED
+      }
+      
       this.notifyMessageListeners(message)
       console.log('📢 [SocketService] Notified message listeners')
     })
@@ -325,6 +368,48 @@ export class SocketService {
     this.socket.on('message_status', (data) => {
       console.log('Message status update:', data)
       // 这里可以更新消息状态
+    })
+
+    // 消息发送成功确认
+    this.socket.on('message:sent', (data: any) => {
+      console.log('✅ [SocketService] Message sent confirmation:', data)
+      const pending = this.pendingMessages.get(data.tempId)
+      if (pending) {
+        const responseTime = Date.now() - pending.sentAt
+        console.log(`✅ Message sent successfully! ID: ${data.messageId}, Response time: ${responseTime}ms`)
+        
+        // 清理pending状态
+        clearTimeout(pending.timeout)
+        this.pendingMessages.delete(data.tempId)
+        
+        // 创建消息对象并resolve
+        const message: Message = {
+          id: data.messageId,
+          content: pending.content,
+          sender: data.sender || { id: 'unknown', name: 'Unknown', username: 'unknown', isOnline: true },
+          timestamp: new Date(data.timestamp || Date.now()),
+          type: data.type || 'text',
+          status: MessageStatus.SENT
+        }
+        
+        pending.resolve(message)
+      }
+    })
+
+    // 消息发送失败通知
+    this.socket.on('message:send:error', (data: any) => {
+      console.error('❌ [SocketService] Message send error:', data)
+      const pending = this.pendingMessages.get(data.tempId)
+      if (pending) {
+        console.error(`❌ Message send failed! Error: ${data.code} - ${data.message}`)
+        
+        // 清理pending状态
+        clearTimeout(pending.timeout)
+        this.pendingMessages.delete(data.tempId)
+        
+        // reject with error
+        pending.reject(new Error(`${data.code}: ${data.message}`))
+      }
     })
 
       // 新成员加入通知 - 根据新API规范添加
@@ -403,31 +488,37 @@ export class SocketService {
     this.notifySystemMessageListeners(`${leftUserName} 离开了聊天室`)
   })
 
-  // 保留旧事件兼容性
+  // 注释掉已弃用的事件监听器 - 如果服务端不再发送这些事件，可以完全删除
+  /*
   this.socket.on('user_joined', (user: User) => {
     console.log('Legacy user_joined event (deprecated):', user)
   })
 
-    // 用户状态变化
-    this.socket.on('user_status_changed', (data) => {
-      console.log('User status changed:', data)
-    })
+  this.socket.on('user_status_changed', (data) => {
+    console.log('User status changed:', data)
+  })
 
-    // 保留旧的user_left事件兼容性
-    this.socket.on('user_left', (user: User) => {
-      console.log('Legacy user_left event (deprecated):', user)
-    })
+  this.socket.on('user_left', (user: User) => {
+    console.log('Legacy user_left event (deprecated):', user)
+  })
+  */
 
-    // 输入状态开始
-    this.socket.on('typing_start', (data) => {
+    // 输入状态开始 - 使用正确的事件名称
+    this.socket.on('typing:start', (data) => {
       console.log('User started typing:', data)
       this.notifyTypingListeners(data.userId, true)
     })
 
-    // 输入状态结束
-    this.socket.on('typing_stop', (data) => {
+    // 输入状态结束 - 使用正确的事件名称
+    this.socket.on('typing:stop', (data) => {
       console.log('User stopped typing:', data)
       this.notifyTypingListeners(data.userId, false)
+    })
+
+    // 输入状态更新
+    this.socket.on('typing:update', (data) => {
+      console.log('Typing status update:', data)
+      // 处理typing状态更新
     })
 
     // 系统消息
@@ -436,11 +527,13 @@ export class SocketService {
       this.notifySystemMessageListeners(message)
     })
 
-    // 用户列表更新
+    // 注释掉已弃用的用户列表更新事件 - 现在通过其他事件来更新用户列表
+    /*
     this.socket.on('users_update', (users: User[]) => {
       console.log('Users update:', users)
       this.notifyUserListeners(users)
     })
+    */
   }
 
   // 处理重连

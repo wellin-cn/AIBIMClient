@@ -16,6 +16,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
 }) => {
   const [message, setMessage] = useState('')
   const [isComposing, setIsComposing] = useState(false)
+  const [isSending, setIsSending] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
@@ -40,11 +41,12 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   }, [sendTypingStatus])
 
   const handleSend = async () => {
-    if (!message.trim() || disabled || !currentUser) {
+    if (!message.trim() || disabled || !currentUser || isSending) {
       console.log('📝 [MessageInput] Send cancelled:', {
         hasMessage: !!message.trim(),
         disabled,
         hasCurrentUser: !!currentUser,
+        isSending,
         messageLength: message.length
       })
       return
@@ -58,6 +60,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       timestamp: new Date().toISOString()
     })
 
+    setIsSending(true)
+    
     try {
       // 发送消息
       console.log('📡 [MessageInput] Calling sendMessage...')
@@ -80,6 +84,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         timestamp: new Date().toISOString()
       })
       // 这里可以显示错误提示
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -158,7 +164,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             variant="text"
             size="sm"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            disabled={disabled}
+            disabled={disabled || isSending}
             className="p-2"
             title="添加表情"
           >
@@ -170,7 +176,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             variant="text"
             size="sm"
             onClick={handleFileUpload}
-            disabled={disabled}
+            disabled={disabled || isSending}
             className="p-2"
             title="发送文件"
           >
@@ -187,8 +193,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             onKeyDown={handleKeyDown}
             onCompositionStart={() => setIsComposing(true)}
             onCompositionEnd={() => setIsComposing(false)}
-            placeholder={disabled ? '连接服务器后可发送消息' : placeholder}
-            disabled={disabled}
+            placeholder={disabled ? '连接服务器后可发送消息' : isSending ? '正在发送消息...' : placeholder}
+            disabled={disabled || isSending}
             className="w-full"
           />
         </div>
@@ -196,12 +202,12 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         {/* 发送按钮 */}
         <Button
           onClick={handleSend}
-          disabled={!message.trim() || disabled}
+          disabled={!message.trim() || disabled || isSending}
           variant="primary"
           size="sm"
           className="px-6"
         >
-          发送
+          {isSending ? '发送中...' : '发送'}
         </Button>
       </div>
 
