@@ -68,7 +68,43 @@ socket.emit('message:send', {
 })
 ```
 
-### 3. 输入状态（可选功能）
+### 3. 文件上传开始（Phase 2功能）
+**事件名**: `file:upload:start`
+
+**数据格式**:
+```typescript
+interface FileUploadStartData {
+  fileName: string           // 原始文件名
+  fileSize: number           // 文件大小（字节）
+  mimeType: string           // 文件MIME类型
+  tempId: string             // 临时ID，用于跟踪上传状态
+}
+```
+
+**示例**:
+```typescript
+socket.emit('file:upload:start', {
+  fileName: 'document.pdf',
+  fileSize: 2621440,
+  mimeType: 'application/pdf',
+  tempId: 'temp_file_123456'
+})
+```
+
+### 4. 文件上传数据块（Phase 2功能）
+**事件名**: `file:upload:chunk`
+
+**数据格式**:
+```typescript
+interface FileUploadChunkData {
+  tempId: string             // 临时ID
+  chunkIndex: number         // 数据块索引
+  chunkData: string          // Base64编码的文件数据
+  isLastChunk: boolean       // 是否为最后一块
+}
+```
+
+### 5. 输入状态（可选功能）
 **事件名**: `typing:start` / `typing:stop`
 
 **数据格式**:
@@ -94,7 +130,7 @@ socket.emit('typing:stop', {
 })
 ```
 
-### 4. 用户离开
+### 6. 用户离开
 **事件名**: `user:leave`
 
 **数据格式**:
@@ -257,7 +293,49 @@ interface TypingUpdateData {
 }
 ```
 
-### 9. 系统通知
+### 9. 文件上传进度（Phase 2功能）
+**事件名**: `file:upload:progress`
+
+**数据格式**:
+```typescript
+interface FileUploadProgressData {
+  tempId: string
+  bytesUploaded: number
+  totalBytes: number
+  percentage: number
+  uploadSpeed?: number   // 上传速度（字节/秒）
+}
+```
+
+### 10. 文件上传完成（Phase 2功能）
+**事件名**: `file:upload:complete`
+
+**数据格式**:
+```typescript
+interface FileUploadCompleteData {
+  tempId: string
+  fileId: string
+  fileUrl: string
+  fileName: string
+  fileSize: number
+  message: FileMessage   // 自动生成的文件消息
+}
+```
+
+### 11. 文件上传失败（Phase 2功能）
+**事件名**: `file:upload:error`
+
+**数据格式**:
+```typescript
+interface FileUploadErrorData {
+  tempId: string
+  code: string           // 错误码：FILE_TOO_LARGE, INVALID_TYPE, STORAGE_FULL等
+  message: string        // 错误信息
+  details?: any         // 详细信息
+}
+```
+
+### 12. 系统通知
 **事件名**: `system:notification`
 
 **数据格式**:

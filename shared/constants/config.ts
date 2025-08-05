@@ -244,8 +244,8 @@ export const FEATURES = {
   TYPING_INDICATORS: true,
   
   // Phase 2 features
-  FILE_UPLOAD: false,
-  FILE_SHARING: false,
+  FILE_UPLOAD: true,
+  FILE_SHARING: true,
   GROUP_CHAT: false,
   
   // Phase 3 features
