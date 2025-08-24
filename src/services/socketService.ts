@@ -37,6 +37,7 @@ export class SocketService {
   private socket: Socket | null = null
   private connectionListeners: Array<(status: ConnectionStatus) => void> = []
   private messageListeners: Array<(message: Message) => void> = []
+  private messageStatusListeners: Array<(confirmation: MessageConfirmation) => void> = []
   private userListeners: Array<(users: User[]) => void> = []
   private typingListeners: Array<(userId: string, isTyping: boolean) => void> = []
   private systemMessageListeners: Array<(message: string) => void> = []
@@ -80,11 +81,19 @@ export class SocketService {
           auth: {
             username: username.trim(),
           },
-          transports: ['polling', 'websocket'], // 先尝试polling，再升级到websocket
-          timeout: 20000,
+          transports: ['websocket', 'polling'], // 优先使用websocket，降级到polling
+          timeout: 10000, // 减少超时时间以更快感知连接问题
           forceNew: true,
           autoConnect: true,
           upgrade: true,
+          reconnection: true,
+          reconnectionAttempts: this.maxReconnectAttempts,
+          reconnectionDelay: this.reconnectDelay,
+          reconnectionDelayMax: 5000,
+          randomizationFactor: 0.5,
+          // 添加ping配置
+          pingInterval: 25000, // 25秒发送一次ping
+          pingTimeout: 10000,  // 10秒内未收到pong则认为断开
         })
 
         this.setupSocketEventListeners()
@@ -109,7 +118,43 @@ export class SocketService {
           this.socket?.emit('user:join', joinData)
           
           this.notifyConnectionListeners(ConnectionStatus.CONNECTED)
+          this.notifySystemMessageListeners('连接成功')
           resolve()
+        })
+
+        // 连接错误
+        this.socket.on('connect_error', (error: any) => {
+          console.error('🔴 Socket connection error:', error)
+          this.notifyConnectionListeners(ConnectionStatus.ERROR)
+          this.notifySystemMessageListeners(`连接错误: ${error.message}`)
+        })
+
+        // 重连尝试
+        this.socket.on('reconnect_attempt', (attempt: number) => {
+          console.log(`🔄 Reconnection attempt ${attempt}`)
+          this.notifyConnectionListeners(ConnectionStatus.RECONNECTING)
+          this.notifySystemMessageListeners(`正在尝试重新连接(${attempt}/${this.maxReconnectAttempts})...`)
+        })
+
+        // 重连成功
+        this.socket.on('reconnect', (attempt: number) => {
+          console.log(`🟢 Reconnected after ${attempt} attempts`)
+          this.reconnectAttempts = 0
+          this.notifyConnectionListeners(ConnectionStatus.CONNECTED)
+          this.notifySystemMessageListeners('重新连接成功')
+        })
+
+        // 重连失败
+        this.socket.on('reconnect_failed', () => {
+          console.error('❌ Reconnection failed')
+          this.notifyConnectionListeners(ConnectionStatus.DISCONNECTED)
+          this.notifySystemMessageListeners('重新连接失败，请刷新页面重试')
+        })
+
+        // ping超时
+        this.socket.on('ping_timeout', () => {
+          console.warn('⚠️ Ping timeout')
+          this.notifySystemMessageListeners('服务器响应超时，正在重试...')
         })
 
         // 连接错误
@@ -122,7 +167,8 @@ export class SocketService {
             type: error.type || 'Unknown type',
             stack: error.stack
           })
-          this.notifyConnectionListeners(ConnectionStatus.DISCONNECTED)
+          this.notifyConnectionListeners(ConnectionStatus.ERROR)
+          this.notifySystemMessageListeners(`连接错误: ${error.message}`)
           reject(error)
         })
 
@@ -143,22 +189,6 @@ export class SocketService {
           
           console.log('📝 Normalized current user object:', normalizedUser)
           this.notifyAuthListeners(normalizedUser)
-          
-          // 更新初始在线用户列表
-          if (data.onlineUsers && Array.isArray(data.onlineUsers)) {
-            const normalizedUsers = data.onlineUsers.map((user: any) => ({
-              id: user.id || Date.now().toString(),
-              name: user.name || user.username || 'Unknown User',
-              username: user.username || user.name || 'unknown',
-              status: user.status || 'online',
-              isOnline: user.isOnline ?? true,
-              avatar: user.avatar || undefined,
-              lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
-            }))
-            
-            console.log('👥 Initial online users list:', normalizedUsers)
-            this.notifyUserListeners(normalizedUsers)
-          }
           
           // 显示服务器信息（如果有）
           if (data.serverInfo) {
@@ -201,10 +231,11 @@ export class SocketService {
   }
 
   // 发送消息
-  sendMessage(content: string): Promise<Message> {
+  sendMessage(content: string, type: MessageType = MessageType.TEXT): Promise<Message> {
     return new Promise((resolve, reject) => {
       console.log('🔗 [SocketService] sendMessage called:', {
         content,
+        type,
         contentLength: content.length,
         isConnected: this.socket?.connected,
         socketId: this.socket?.id,
@@ -224,13 +255,14 @@ export class SocketService {
       }
 
       // 生成临时消息ID用于跟踪
-      const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)
+      const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const timestamp = Date.now()
       
       const messageData = {
-        type: 'text',
+        type,
         content: content.trim(),
-        timestamp: Date.now(),
-        tempId: tempId
+        timestamp,
+        tempId
       }
 
       console.log('📤 [SocketService] Emitting message:send event:', {
@@ -239,11 +271,25 @@ export class SocketService {
         transport: this.socket.io?.engine?.transport?.name
       })
 
-      // 设置超时处理
+      // 设置超时处理（10秒）
       const timeout = setTimeout(() => {
-        console.error('⏰ [SocketService] Message send timeout after 15 seconds:', tempId)
-        reject(new Error('Message send timeout'))
-      }, 15000)
+        console.error('⏰ [SocketService] Message send timeout after 10 seconds:', tempId)
+        const pending = this.pendingMessages.get(tempId)
+        if (pending) {
+          // 清理pending状态
+          this.pendingMessages.delete(tempId)
+          // 通知超时
+          const timeoutError = new Error('Message send timeout')
+          this.notifyMessageStatusListeners({
+            tempId,
+            messageId: tempId,
+            timestamp,
+            status: MessageStatus.TIMEOUT,
+            error: timeoutError.message
+          })
+          reject(timeoutError)
+        }
+      }, 10000)
 
       // 存储pending消息信息用于响应匹配
       this.pendingMessages.set(tempId, {
@@ -251,11 +297,66 @@ export class SocketService {
         reject,
         timeout,
         content: content.trim(),
-        sentAt: Date.now()
+        type,
+        sentAt: timestamp
       })
 
       // 使用正确的事件名称发送消息
       this.socket.emit('message:send', messageData)
+    })
+  }
+
+  // 重发消息
+  resendMessage(tempId: string): Promise<Message> {
+    return new Promise((resolve, reject) => {
+      const pending = this.pendingMessages.get(tempId)
+      if (!pending) {
+        reject(new Error('Message not found'))
+        return
+      }
+
+      if (!this.socket?.connected) {
+        reject(new Error('Socket not connected'))
+        return
+      }
+
+      console.log('🔄 [SocketService] Resending message:', tempId)
+
+      // 更新发送时间
+      const timestamp = Date.now()
+      
+      // 设置新的超时
+      const timeout = setTimeout(() => {
+        console.error('⏰ [SocketService] Message resend timeout after 10 seconds:', tempId)
+        const pending = this.pendingMessages.get(tempId)
+        if (pending) {
+          // 清理pending状态
+          this.pendingMessages.delete(tempId)
+          // 通知超时
+          const timeoutError = new Error('Message resend timeout')
+          this.notifyMessageStatusListeners({
+            tempId,
+            messageId: tempId,
+            timestamp,
+            status: MessageStatus.TIMEOUT,
+            error: timeoutError.message
+          })
+          reject(timeoutError)
+        }
+      }, 10000)
+
+      // 更新pending消息信息
+      this.pendingMessages.set(tempId, {
+        resolve,
+        reject,
+        timeout,
+        content: pending.content,
+        type: pending.type,
+        sentAt: timestamp
+      })
+
+      // 发送重发事件
+      this.socket.emit('message:resend', tempId)
     })
   }
 
@@ -382,16 +483,25 @@ export class SocketService {
         clearTimeout(pending.timeout)
         this.pendingMessages.delete(data.tempId)
         
-        // 创建消息对象并resolve
+        // 创建消息对象
         const message: Message = {
           id: data.messageId,
           content: pending.content,
           sender: data.sender || { id: 'unknown', name: 'Unknown', username: 'unknown', isOnline: true },
           timestamp: new Date(data.timestamp || Date.now()),
-          type: data.type || 'text',
+          type: pending.type || MessageType.TEXT,
           status: MessageStatus.SENT
         }
         
+        // 通知消息状态变更
+        this.notifyMessageStatusListeners({
+          tempId: data.tempId,
+          messageId: data.messageId,
+          timestamp: data.timestamp || Date.now(),
+          status: MessageStatus.SENT
+        })
+        
+        // resolve promise
         pending.resolve(message)
       }
     })
@@ -407,7 +517,16 @@ export class SocketService {
         clearTimeout(pending.timeout)
         this.pendingMessages.delete(data.tempId)
         
-        // reject with error
+        // 通知消息状态变更
+        this.notifyMessageStatusListeners({
+          tempId: data.tempId,
+          messageId: data.tempId,
+          timestamp: Date.now(),
+          status: MessageStatus.FAILED,
+          error: `${data.code}: ${data.message}`
+        })
+        
+        // reject promise
         pending.reject(new Error(`${data.code}: ${data.message}`))
       }
     })
@@ -417,9 +536,20 @@ export class SocketService {
     console.log('🎉 New member joined:', data.newMember)
     console.log('📋 Updated user list:', data.onlineUsers)
     
-    // 更新在线用户列表
-    if (data.onlineUsers && Array.isArray(data.onlineUsers)) {
-      const normalizedUsers = data.onlineUsers.map((user: any) => ({
+    // 规范化新成员数据
+    const normalizedNewMember = data.newMember ? {
+      id: data.newMember.id || Date.now().toString(),
+      name: data.newMember.name || data.newMember.username || 'Unknown User',
+      username: data.newMember.username || data.newMember.name || 'unknown',
+      status: data.newMember.status || 'online',
+      isOnline: data.newMember.isOnline ?? true,
+      avatar: data.newMember.avatar || undefined,
+      lastSeen: data.newMember.lastSeen ? new Date(data.newMember.lastSeen) : new Date()
+    } : null
+    
+    // 规范化在线用户列表
+    const normalizedUsers = data.onlineUsers && Array.isArray(data.onlineUsers) ? 
+      data.onlineUsers.map((user: any) => ({
         id: user.id || Date.now().toString(),
         name: user.name || user.username || 'Unknown User',
         username: user.username || user.name || 'unknown',
@@ -427,40 +557,23 @@ export class SocketService {
         isOnline: user.isOnline ?? true,
         avatar: user.avatar || undefined,
         lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
-      }))
-      
+      })) : []
+    
+    // 更新在线用户列表
+    if (normalizedUsers.length > 0) {
+      console.log('👥 Updating online users list:', normalizedUsers)
       this.notifyUserListeners(normalizedUsers)
     }
     
-    // 显示新成员加入通知
-    const newMemberName = data.newMember?.username || data.newMember?.name || 'Unknown User'
-    this.notifySystemMessageListeners(`${newMemberName} 加入了聊天室`)
-    
-    // 通知新成员加入监听器
-    if (data.newMember) {
-      const normalizedNewMember = {
-        id: data.newMember.id || Date.now().toString(),
-        name: data.newMember.name || data.newMember.username || 'Unknown User',
-        username: data.newMember.username || data.newMember.name || 'unknown',
-        status: data.newMember.status || 'online',
-        isOnline: data.newMember.isOnline ?? true,
-        avatar: data.newMember.avatar || undefined,
-        lastSeen: data.newMember.lastSeen ? new Date(data.newMember.lastSeen) : new Date()
-      }
-      
-      // 获取标准化的用户列表
-      const allUsers = data.onlineUsers && Array.isArray(data.onlineUsers) ? 
-        data.onlineUsers.map((user: any) => ({
-          id: user.id || Date.now().toString(),
-          name: user.name || user.username || 'Unknown User',
-          username: user.username || user.name || 'unknown',
-          status: user.status || 'online',
-          isOnline: user.isOnline ?? true,
-          avatar: user.avatar || undefined,
-          lastSeen: user.lastSeen ? new Date(user.lastSeen) : new Date()
-        })) : []
-        
-      this.notifyNewMemberListeners(normalizedNewMember, allUsers)
+    // 只有当新成员数据有效时才发送通知
+    if (normalizedNewMember) {
+      console.log('🎉 Notifying about new member:', normalizedNewMember.name)
+      // 显示系统消息
+      this.notifySystemMessageListeners(`${normalizedNewMember.name} 加入了聊天室`)
+      // 通知新成员加入监听器
+      this.notifyNewMemberListeners(normalizedNewMember, normalizedUsers)
+    } else {
+      console.warn('⚠️ Received user:new-member-joined event without valid member data')
     }
   })
 
@@ -539,20 +652,34 @@ export class SocketService {
   // 处理重连
   private handleReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('Max reconnect attempts reached')
+      console.log('❌ Max reconnect attempts reached')
       this.notifyConnectionListeners(ConnectionStatus.DISCONNECTED)
+      this.notifySystemMessageListeners('连接已断开，请刷新页面重试')
       return
     }
 
     this.reconnectAttempts++
     this.notifyConnectionListeners(ConnectionStatus.RECONNECTING)
+    this.notifySystemMessageListeners(`正在尝试重新连接(${this.reconnectAttempts}/${this.maxReconnectAttempts})...`)
+
+    // 使用指数退避算法计算延迟
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1),
+      5000 // 最大延迟5秒
+    )
 
     setTimeout(() => {
       if (this.socket && !this.socket.connected) {
-        console.log(`Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`)
+        console.log(`🔄 Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} (delay: ${delay}ms)`)
+        
+        // 在重连前清理之前的事件监听器
+        this.socket.removeAllListeners()
+        this.setupSocketEventListeners()
+        
+        // 尝试重新连接
         this.socket.connect()
       }
-    }, this.reconnectDelay * this.reconnectAttempts)
+    }, delay)
   }
 
   // 事件监听器管理
@@ -585,6 +712,17 @@ export class SocketService {
       const index = this.messageListeners.indexOf(listener)
       if (index > -1) {
         this.messageListeners.splice(index, 1)
+      }
+    }
+  }
+
+  // 添加消息状态监听器
+  onMessageStatus(listener: (confirmation: MessageConfirmation) => void): () => void {
+    this.messageStatusListeners.push(listener)
+    return () => {
+      const index = this.messageStatusListeners.indexOf(listener)
+      if (index > -1) {
+        this.messageStatusListeners.splice(index, 1)
       }
     }
   }
@@ -652,6 +790,11 @@ export class SocketService {
   // 通知消息监听器
   private notifyMessageListeners(message: Message): void {
     this.messageListeners.forEach(listener => listener(message))
+  }
+
+  // 通知消息状态监听器
+  private notifyMessageStatusListeners(confirmation: MessageConfirmation): void {
+    this.messageStatusListeners.forEach(listener => listener(confirmation))
   }
 
   // 通知用户列表监听器

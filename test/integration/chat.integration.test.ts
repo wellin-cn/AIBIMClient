@@ -139,8 +139,126 @@ describe('聊天功能集成测试', () => {
 
       newMemberHandler?.(newMemberData)
 
-      // 验证事件处理是否正确
-      // 这里可以检查 store 状态更新或其他副作用
+      // 验证在线用户列表是否正确更新
+      const users = useChatStore.getState().users
+      expect(users).toHaveLength(2)
+      expect(users[1]).toEqual(expect.objectContaining({
+        id: '2',
+        name: 'New User',
+        username: 'newuser'
+      }))
+    })
+
+    it('应该正确处理多用户同时在线的情况', async () => {
+      // 设置当前用户
+      const currentUser = {
+        id: '1',
+        name: 'Test User',
+        username: 'testuser',
+        isOnline: true
+      }
+      useAuthStore.getState().setCurrentUser(currentUser)
+
+      // 模拟第二个用户加入
+      const user2 = {
+        id: '2',
+        name: 'User 2',
+        username: 'user2',
+        isOnline: true
+      }
+      const user2JoinData = {
+        newMember: user2,
+        onlineUsers: [currentUser, user2]
+      }
+
+      // 模拟第三个用户加入
+      const user3 = {
+        id: '3',
+        name: 'User 3',
+        username: 'user3',
+        isOnline: true
+      }
+      const user3JoinData = {
+        newMember: user3,
+        onlineUsers: [currentUser, user2, user3]
+      }
+
+      // 获取事件处理器
+      const newMemberHandler = mockSocket.on.mock.calls.find(
+        call => call[0] === 'user:new-member-joined'
+      )?.[1]
+
+      expect(newMemberHandler).toBeDefined()
+
+      // 触发用户加入事件
+      newMemberHandler?.(user2JoinData)
+      newMemberHandler?.(user3JoinData)
+
+      // 验证用户列表状态
+      const { users } = useChatStore.getState()
+      expect(users).toHaveLength(3)
+
+      // 验证每个用户的身份信息是否正确
+      expect(users).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: '1',
+          name: 'Test User',
+          username: 'testuser'
+        }),
+        expect.objectContaining({
+          id: '2',
+          name: 'User 2',
+          username: 'user2'
+        }),
+        expect.objectContaining({
+          id: '3',
+          name: 'User 3',
+          username: 'user3'
+        })
+      ]))
+
+      // 验证当前用户的身份信息没有被覆盖
+      const { currentUser: storedCurrentUser } = useAuthStore.getState()
+      expect(storedCurrentUser).toEqual(expect.objectContaining({
+        id: '1',
+        name: 'Test User',
+        username: 'testuser'
+      }))
+    })
+
+    it('应该正确处理用户离开事件', () => {
+      // 设置初始用户列表
+      const initialUsers = [
+        { id: '1', name: 'Test User', username: 'testuser', isOnline: true },
+        { id: '2', name: 'User 2', username: 'user2', isOnline: true },
+        { id: '3', name: 'User 3', username: 'user3', isOnline: true }
+      ]
+      useChatStore.getState().setUsers(initialUsers)
+
+      // 获取用户离开事件处理器
+      const userLeftHandler = mockSocket.on.mock.calls.find(
+        call => call[0] === 'user:left'
+      )?.[1]
+
+      expect(userLeftHandler).toBeDefined()
+
+      // 模拟用户离开
+      const leftUserData = {
+        user: { id: '2', name: 'User 2', username: 'user2' },
+        onlineUsers: [
+          { id: '1', name: 'Test User', username: 'testuser', isOnline: true },
+          { id: '3', name: 'User 3', username: 'user3', isOnline: true }
+        ]
+      }
+
+      userLeftHandler?.(leftUserData)
+
+      // 验证用户列表更新
+      const { users } = useChatStore.getState()
+      expect(users).toHaveLength(2)
+      expect(users).not.toContainEqual(
+        expect.objectContaining({ id: '2' })
+      )
     })
   })
 })

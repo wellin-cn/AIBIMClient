@@ -16,6 +16,7 @@ export interface Message {
   timestamp: Date
   type: MessageType
   status?: MessageStatus
+  fileInfo?: FileInfo
 }
 
 export enum MessageType {
@@ -30,7 +31,70 @@ export enum MessageStatus {
   SENT = 'sent',
   DELIVERED = 'delivered',
   RECEIVED = 'received',
-  FAILED = 'failed'
+  FAILED = 'failed',
+  TIMEOUT = 'timeout'
+}
+
+export interface MessageConfirmation {
+  tempId: string
+  messageId: string
+  timestamp: number
+  status: MessageStatus
+  error?: string
+}
+
+// 文件相关类型
+export interface FileInfo {
+  id: string
+  name: string
+  size: number
+  type: string
+  url: string
+  uploadedAt: Date
+}
+
+export enum FileUploadStatus {
+  PENDING = 'pending',
+  UPLOADING = 'uploading',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled'
+}
+
+export interface FileUploadProgress {
+  tempId: string
+  fileName: string
+  fileSize: number
+  uploadedBytes: number
+  status: FileUploadStatus
+  progress: number
+  error?: string
+  uploadedAt?: Date
+}
+
+export interface FileUploadStartData {
+  tempId: string
+  fileName: string
+  fileSize: number
+}
+
+export interface FileUploadProgressData {
+  tempId: string
+  uploadedBytes: number
+  progress: number
+}
+
+export interface FileUploadCompleteData {
+  tempId: string
+  fileId: string
+  fileName: string
+  fileSize: number
+  fileUrl: string
+}
+
+export interface FileUploadErrorData {
+  tempId: string
+  error: string
 }
 
 // 连接状态
@@ -38,7 +102,8 @@ export enum ConnectionStatus {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
   CONNECTED = 'connected',
-  RECONNECTING = 'reconnecting'
+  RECONNECTING = 'reconnecting',
+  ERROR = 'error'
 }
 
 // 应用状态
@@ -52,15 +117,18 @@ export interface AppState {
 // Socket事件类型
 export interface SocketEvents {
   // 客户端发送的事件
-  'user:join': (userData: { name: string }) => void
+  'user:join': (userData: { username: string; timestamp: string }) => void
   'user:leave': () => void
-  'message:send': (message: { content: string }) => void
+  'message:send': (message: { content: string; tempId: string; timestamp: number; type?: string }) => void
+  'message:resend': (tempId: string) => void
   
   // 服务器发送的事件
-  'user:joined': (user: User) => void
-  'user:left': (userId: string) => void
-  'user:list': (users: User[]) => void
+  'user:joined': (data: { user: User; onlineUsers: User[]; serverInfo?: any }) => void
+  'user:new-member-joined': (data: { newMember: User; onlineUsers: User[] }) => void
+  'user:left': (data: { user: User; onlineUsers: User[] }) => void
   'message:received': (message: Message) => void
+  'message:sent': (confirmation: MessageConfirmation) => void
+  'message:send:error': (data: { tempId: string; code: string; message: string }) => void
   'message:history': (messages: Message[]) => void
   'error': (error: { code: string; message: string }) => void
 }
